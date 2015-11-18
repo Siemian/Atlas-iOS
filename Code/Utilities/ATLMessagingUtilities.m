@@ -177,13 +177,18 @@ NSArray *ATLMessagePartsWithMediaAttachment(ATLMediaAttachment *mediaAttachment)
     }
     
     // Create the message part for the main media (should be on index zero).
-    [messageParts addObject:[LYRMessagePart messagePartWithMIMEType:mediaAttachment.mediaMIMEType stream:mediaAttachment.mediaInputStream]];
-    
+    //TODO WARNING NOT ON GITHUB - ALEX CHANGED
+    if ([mediaAttachment.mediaMIMEType isEqualToString:(ATLMIMETypeTextPlain)]) {
+        [messageParts addObject:[LYRMessagePart messagePartWithText:mediaAttachment.textRepresentation]];
+    }
+    else {
+        [messageParts addObject:[LYRMessagePart messagePartWithMIMEType:mediaAttachment.mediaMIMEType stream:mediaAttachment.mediaInputStream]];
+    }
     // If there's a thumbnail in the attachment, add it to the message parts on the second index.
     if (mediaAttachment.thumbnailInputStream) {
         [messageParts addObject:[LYRMessagePart messagePartWithMIMEType:mediaAttachment.thumbnailMIMEType stream:mediaAttachment.thumbnailInputStream]];
     }
-
+    
     // If there's any additional metadata, add it to the message parts on the third index.
     if (mediaAttachment.metadataInputStream) {
         [messageParts addObject:[LYRMessagePart messagePartWithMIMEType:mediaAttachment.metadataMIMEType stream:mediaAttachment.metadataInputStream]];

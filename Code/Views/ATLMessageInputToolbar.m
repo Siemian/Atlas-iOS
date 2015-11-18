@@ -132,9 +132,13 @@ static CGFloat const ATLButtonHeight = 28.0f;
     
     // This makes the input accessory view work with UISplitViewController to manage the frame width.
     if (self.containerViewController) {
-        CGRect windowRect = [self.containerViewController.view.superview convertRect:self.containerViewController.view.frame toView:nil];
+        CGRect windowRect = [self.containerViewController.view convertRect:self.containerViewController.view.frame toView:nil];
         frame.size.width = windowRect.size.width;
         frame.origin.x = windowRect.origin.x;
+        //TODO: ALEX NOT ON GITHUB
+        if (frame.origin.x < 0) {
+            frame.origin.x = 0;
+        }
     }
     
     leftButtonFrame.size.height = ATLButtonHeight;
