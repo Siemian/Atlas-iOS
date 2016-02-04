@@ -187,6 +187,10 @@ static NSInteger const ATLPhotoActionSheet = 1000;
         [self cacheMediaAttachments];
     }
     self.collectionView.delegate = nil;
+    self.addressBarController.delegate = nil;
+    self.conversationDataSource.queryController.delegate = nil;
+    self.locationManager.delegate = nil;
+
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
