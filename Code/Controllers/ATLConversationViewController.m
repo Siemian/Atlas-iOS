@@ -938,6 +938,9 @@ static NSInteger const ATLPhotoActionSheet = 1000;
 
 - (void)configureConversationForAddressBar
 {
+    if (!self.layerClient.authenticatedUser) {
+        return;
+    }
     NSSet *participants = self.addressBarController.selectedParticipants.set;
     NSSet *participantIdentifiers = [participants valueForKey:@"userID"];
     
@@ -1163,6 +1166,7 @@ static NSInteger const ATLPhotoActionSheet = 1000;
         if (conversation) return conversation;
     }
     NSSet *participantIdentifiers = [participants valueForKey:@"userID"];
+
     conversation = [self existingConversationWithParticipantIdentifiers:participantIdentifiers];
     if (conversation) return conversation;
     
