@@ -40,21 +40,14 @@ static UIView *ATLMakeLoadingMoreConversationsIndicatorView()
     return activityIndicatorView;
 }
 
-@interface ATLConversationListViewController () <UIActionSheetDelegate, LYRQueryControllerDelegate, UISearchBarDelegate, UISearchControllerDelegate, UISearchDisplayDelegate>
+@interface ATLConversationListViewController () <UIActionSheetDelegate, LYRQueryControllerDelegate, UISearchResultsUpdating>
 
 @property (nonatomic) LYRQueryController *queryController;
-@property (nonatomic) LYRQueryController *searchQueryController;
 @property (nonatomic) LYRConversation *conversationToDelete;
 @property (nonatomic) LYRConversation *conversationSelectedBeforeContentChange;
-@property (nonatomic) UISearchBar *searchBar;
 @property (nonatomic) BOOL hasAppeared;
-@property (nonatomic) BOOL searchQueryControllerIsActive;
 @property (nonatomic) BOOL showingMoreConversationsIndicator;
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-@property (nonatomic, readwrite) UISearchDisplayController *searchController;
-#pragma GCC diagnostic pop
+@property (nonatomic, readwrite) UISearchController *searchController;
 
 @end
 
@@ -122,56 +115,54 @@ NSString *const ATLConversationListViewControllerDeletionModeEveryone = @"Everyo
 - (void)viewDidLoad
 {
     [super viewDidLoad];
-
+    
     self.title = ATLLocalizedString(@"atl.conversationlist.title.key", ATLConversationListViewControllerTitle, nil);
     self.accessibilityLabel = ATLConversationListViewControllerTitle;
-
+    
     self.tableView.accessibilityLabel = ATLConversationTableViewAccessibilityLabel;
     self.tableView.accessibilityIdentifier = ATLConversationTableViewAccessibilityIdentifier;
     self.tableView.isAccessibilityElement = YES;
     [self configureLoadingMoreConversationsIndicatorView];
     [self.tableView registerClass:self.cellClass forCellReuseIdentifier:ATLConversationCellReuseIdentifier];
-
+    
     if (self.shouldDisplaySearchController) {
-        self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectZero];
-        [self.searchBar sizeToFit];
-        self.searchBar.translucent = NO;
-        self.searchBar.accessibilityLabel = @"Search Bar";
-        self.searchBar.delegate = self;
-        self.tableView.tableHeaderView = self.searchBar;
+        // UISearchController
+        self.searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
+        self.searchController.searchResultsUpdater = self;
+        self.searchController.dimsBackgroundDuringPresentation = NO;
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-        self.searchController = [[UISearchDisplayController alloc] initWithSearchBar:self.searchBar contentsController:self];
-#pragma GCC diagnostic pop
-        self.searchController.delegate = self;
-        self.searchController.searchResultsDelegate = self;
-        self.searchController.searchResultsDataSource = self;
+        // UISearchBar
+        self.searchController.searchBar.delegate = self;
+        self.searchController.searchBar.translucent = NO;
+        self.searchController.searchBar.accessibilityLabel = @"Search Bar";
+        [self.searchController.searchBar sizeToFit];
+        self.tableView.tableHeaderView = self.searchController.searchBar;
+        
+        // Since the search view covers the table view when active we make the
+        // table view controller define the presentation context
+        self.definesPresentationContext = YES;
     }
 }
 
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
-
+    
     // Perform setup here so that our children can initialize via viewDidLoad
     if (!self.queryController) {
         [self setupConversationQueryController];
     }
-
+    
     if (!self.hasAppeared) {
         // Hide the search bar
-        CGFloat contentOffset = self.tableView.contentOffset.y + self.searchBar.frame.size.height;
+        CGFloat contentOffset = self.tableView.contentOffset.y + self.searchController.searchBar.frame.size.height;
         self.tableView.contentOffset = CGPointMake(0, contentOffset);
         self.tableView.rowHeight = self.rowHeight;
-        if (self.allowsEditing) [self addEditButton];
+        if (self.allowsEditing) {
+            [self addEditButton];
+        }
     }
-
-    if (self.shouldDisplaySearchController && self.searchController.isActive) {
-        self.searchQueryControllerIsActive = YES;
-        [self.searchController.searchResultsTableView reloadData];
-    }
-
+    
     NSIndexPath *selectedIndexPath = [self.tableView indexPathForSelectedRow];
     if (selectedIndexPath && self.clearsSelectionOnViewWillAppear) {
         [self.tableView deselectRowAtIndexPath:selectedIndexPath animated:animated];
@@ -181,7 +172,7 @@ NSString *const ATLConversationListViewControllerDeletionModeEveryone = @"Everyo
             [self.tableView selectRowAtIndexPath:selectedIndexPath animated:NO scrollPosition:UITableViewScrollPositionNone];
         }];
     }
-
+    
     // Track changes in authentication state to manipulate the query controller appropriately
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(layerClientDidAuthenticate:) name:LYRClientDidAuthenticateNotification object:self.layerClient];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(layerClientDidDeauthenticate:) name:LYRClientDidDeauthenticateNotification object:self.layerClient];
@@ -197,7 +188,7 @@ NSString *const ATLConversationListViewControllerDeletionModeEveryone = @"Everyo
 - (void)viewWillDisappear:(BOOL)animated
 {
     [super viewWillDisappear:animated];
-
+    
     [[NSNotificationCenter defaultCenter] removeObserver:self name:LYRClientDidAuthenticateNotification object:self.layerClient];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:LYRClientDidDeauthenticateNotification object:self.layerClient];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:LYRClientDidSwitchSessionNotification object:self.layerClient];
@@ -269,16 +260,15 @@ NSString *const ATLConversationListViewControllerDeletionModeEveryone = @"Everyo
         return;
     }
     LYRQuery *query = [LYRQuery queryWithQueryableClass:[LYRConversation class]];
-    query.predicate = [LYRPredicate predicateWithProperty:@"participants" predicateOperator:LYRPredicateOperatorIsIn value:@[ self.layerClient.authenticatedUser.userID ]];
     query.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"lastMessage.receivedAt" ascending:NO]];
-
+    
     if ([self.dataSource respondsToSelector:@selector(conversationListViewController:willLoadWithQuery:)]) {
         query = [self.dataSource conversationListViewController:self willLoadWithQuery:query];
         if (![query isKindOfClass:[LYRQuery class]]){
             @throw [NSException exceptionWithName:NSInvalidArgumentException reason:@"Data source must return an `LYRQuery` object." userInfo:nil];
         }
     }
-
+    
     NSError *error;
     self.queryController = [self.layerClient queryControllerWithQuery:query error:&error];
     if (!self.queryController) {
@@ -288,7 +278,7 @@ NSString *const ATLConversationListViewControllerDeletionModeEveryone = @"Everyo
     self.showingMoreConversationsIndicator = [self moreConversationsAvailable];
     self.queryController.paginationWindow = ATLConverstionListPaginationWindow;
     self.queryController.delegate = self;
-
+    
     BOOL success = [self.queryController execute:&error];
     if (!success) {
         NSLog(@"LayerKit failed to execute query with error: %@", error);
@@ -324,16 +314,15 @@ NSString *const ATLConversationListViewControllerDeletionModeEveryone = @"Everyo
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-    return [[self queryControllerForTableView:tableView] numberOfObjectsInSection:section];
+    return [self.queryController numberOfObjectsInSection:section];
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
     NSString *reuseIdentifier = [self reuseIdentifierForConversation:nil atIndexPath:indexPath];
-
+    
     UITableViewCell<ATLConversationPresenting> *conversationCell = [tableView dequeueReusableCellWithIdentifier:reuseIdentifier forIndexPath:indexPath];
-
-    [self configureCell:conversationCell forTableView: tableView atIndexPath:indexPath];
+    [self configureCell:conversationCell atIndexPath:indexPath];
     return conversationCell;
 }
 
@@ -344,13 +333,11 @@ NSString *const ATLConversationListViewControllerDeletionModeEveryone = @"Everyo
 
 #pragma mark - Cell Configuration
 
-- (void)configureCell:(UITableViewCell<ATLConversationPresenting> *)conversationCell forTableView:(UITableView *)tableView atIndexPath:(NSIndexPath *)indexPath
+- (void)configureCell:(UITableViewCell<ATLConversationPresenting> *)conversationCell atIndexPath:(NSIndexPath *)indexPath
 {
-    LYRQueryController *queryController = [self queryControllerForTableView:tableView];
-    LYRConversation *conversation = [queryController objectAtIndexPath:indexPath];
-
+    LYRConversation *conversation = [self.queryController numberOfObjectsInSection:indexPath.section] ? [self.queryController objectAtIndexPath:indexPath] : nil;
     [conversationCell presentConversation:conversation];
-
+    
     if (self.displaysAvatarItem) {
         if ([self.dataSource respondsToSelector:@selector(conversationListViewController:avatarItemForConversation:)]) {
             id<ATLAvatarItem> avatarItem = [self.dataSource conversationListViewController:self avatarItemForConversation:conversation];
@@ -359,14 +346,14 @@ NSString *const ATLConversationListViewControllerDeletionModeEveryone = @"Everyo
             @throw [NSException exceptionWithName:NSInternalInconsistencyException reason:@"Conversation View Delegate must return an object conforming to the `ATLAvatarItem` protocol." userInfo:nil];
         }
     }
-
+    
     if ([self.dataSource respondsToSelector:@selector(conversationListViewController:titleForConversation:)]) {
         NSString *conversationTitle = [self.dataSource conversationListViewController:self titleForConversation:conversation];
         [conversationCell updateWithConversationTitle:conversationTitle];
     } else {
         @throw [NSException exceptionWithName:NSInternalInconsistencyException reason:@"Conversation View Delegate must return a conversation label" userInfo:nil];
     }
-
+    
     NSString *lastMessageText;
     if ([self.dataSource respondsToSelector:@selector(conversationListViewController:lastMessageTextForConversation:)]) {
         lastMessageText = [self.dataSource conversationListViewController:self lastMessageTextForConversation:conversation];
@@ -600,76 +587,25 @@ NSString *const ATLConversationListViewControllerDeletionModeEveryone = @"Everyo
     self.tableView.tableFooterView = self.showingMoreConversationsIndicator ? ATLMakeLoadingMoreConversationsIndicatorView() : [[UIView alloc] init];
 }
 
-#pragma mark - UISearchDisplayDelegate
+#pragma mark - UISearchResultsUpdating
 
-- (void)searchBarTextDidBeginEditing:(UISearchBar *)searchBar
+- (void)updateSearchResultsForSearchController:(UISearchController *)searchController
 {
-    self.searchQueryControllerIsActive = YES;
-}
-
-- (void)searchBarTextDidEndEditing:(UISearchBar *)searchBar
-{
-    self.searchQueryControllerIsActive = NO;
-}
-
-- (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar
-{
-    self.searchQueryControllerIsActive = NO;
-}
-
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-
-- (void)searchDisplayController:(UISearchDisplayController *)controller didLoadSearchResultsTableView:(UITableView *)tableView
-{
-    tableView.rowHeight = self.rowHeight;
-    [tableView registerClass:self.cellClass forCellReuseIdentifier:ATLConversationCellReuseIdentifier];
-}
-
-- (BOOL)searchDisplayController:(UISearchDisplayController *)controller shouldReloadTableForSearchString:(NSString *)searchString
-{
+    NSString *searchString = searchController.searchBar.text;
     if ([self.delegate respondsToSelector:@selector(conversationListViewController:didSearchForText:completion:)]) {
         [self.delegate conversationListViewController:self didSearchForText:searchString completion:^(NSSet *filteredParticipants) {
-            if (![searchString isEqualToString:controller.searchBar.text]) return;
+            if (![searchString isEqualToString:self.searchController.searchBar.text]) return;
             NSSet *participantIdentifiers = [filteredParticipants valueForKey:@"userID"];
-
+            
             LYRQuery *query = [LYRQuery queryWithQueryableClass:[LYRConversation class]];
-            query.predicate = [LYRPredicate predicateWithProperty:@"participants" predicateOperator:LYRPredicateOperatorIsIn value:participantIdentifiers];
-            query.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"lastMessage.receivedAt" ascending:NO]];
-
+            self.queryController.query.predicate = [LYRPredicate predicateWithProperty:@"participants" predicateOperator:LYRPredicateOperatorIsIn value:participantIdentifiers];
+            self.queryController.query.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"lastMessage.receivedAt" ascending:NO]];
+            
             NSError *error;
-            self.searchQueryController = [self.layerClient queryControllerWithQuery:query error:&error];
-            if (!self.queryController) {
-                NSLog(@"LayerKit failed to create a query controller with error: %@", error);
-                return;
-            }
-
-            [self.searchQueryController execute:&error];
-            [self.searchController.searchResultsTableView reloadData];
+            [self.queryController execute:&error];
+            
+            [self.tableView reloadData];
         }];
-    }
-    return NO;
-}
-
-#pragma GCC diagnostic pop
-
-- (LYRQueryController *)queryController
-{
-    if (self.searchQueryControllerIsActive && self.searchController.isActive) {
-        return _searchQueryController;
-    } else {
-        return _queryController;
-    }
-}
-
-- (LYRQueryController *)queryControllerForTableView:(UITableView *)tableView {
-    if (tableView == self.tableView) {
-        return _queryController;
-    } else if (tableView == self.searchController.searchResultsTableView) {
-        return _searchQueryController;
-    } else {
-        @throw [NSException exceptionWithName:NSInternalInconsistencyException reason:@"TableView doesn't have query controller" userInfo:nil];
     }
 }
 
